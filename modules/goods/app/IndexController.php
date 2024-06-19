@@ -11,6 +11,7 @@ use framework\common\BasicController;
 use goods\models\Goods;
 use Yii;
 use yii\data\ActiveDataProvider;
+use framework\wechat\Lib\Tools;
 
 /**
  * 小程序商品
@@ -501,15 +502,53 @@ class IndexController extends BasicController
 
     public static function addSales($event)
     {
+        //add by qpzhou
+        $has_tech_support = 'p';
+        $period = 0;
+        $total_amount = 0;
+        $buyer = M('order', 'OrderBuyer')::find()->where(['order_sn' => $event->pay_order_sn])->one();
+        $phone = $buyer['mobile'];
 
-        $list = M('order', 'OrderGoods')::find()->where(['order_sn' => $event->pay_order_sn])->with('goods')->select('order_sn,goods_id,goods_number,pay_amount')->asArray()->all();
+        $list = M('order', 'OrderGoods')::find()->where(['order_sn' => $event->pay_order_sn])->with('goods')->select('order_sn,goods_id,goods_number,pay_amount,goods_param')->asArray()->all();
         foreach ($list as $value) {
             Goods::updateAllCounters(['sales_amount' => $value['pay_amount'], 'sales' => $value['goods_number']], ['id' => $value['goods_id']]);
             if ($value['goods']['is_promoter'] === 1) {
                 M('promoter', 'PromoterGoods')::updateAllCounters(['sales' => $value['goods_number']], ['goods_id' => $value['goods_id']]);
             }
+
+            //add by qpzhou
+            if ($value['goods_id'] === 2) { //VIP产品
+                $month = 1;
+                if (strpos($value['goods_param'], '月卡') === 0) {
+                    $month = 1;
+                } elseif (strpos($value['goods_param'], '季卡') === 0) {
+                    $month = 3;
+                } elseif (strpos($value['goods_param'], '半年卡') === 0) {
+                    $month = 6;
+                } elseif (strpos($value['goods_param'], '年卡') === 0) {
+                    $month = 12;
+                }
+
+                if (strpos($value['goods_param'], '无技术支持') !== false) {
+                    $has_tech_support = 'q';
+                }
+                
+                $period += ($month * $value['goods_number']);
+                $total_amount += $value['pay_amount'];
+            }
         }
 
+
+        //add by qpzhou:支付成功后，调用api开通会员
+        //https://www.fun123.cn/pay/api?toke=ZqPKTn&orderId=vxq1osn1288888&phone=18721201607&period=1&amount=8
+        $uri = 'https://www.fun123.cn/pay/api?toke=ZqPKTn&orderId=vx' .  $has_tech_support . $period . $event->pay_order_sn .
+            '&phone=' . $phone . '&period=' . $period . '&amount=' . $total_amount;
+        $res = Tools::httpGet($uri);
+
+        $fp = fopen("/var/www/leadshop/modules/goods/app/log.txt", "a");
+        fwrite($fp, "uri:" . $uri);
+        fwrite($fp, "res:" . $res);
+        fclose($fp);
     }
 
     /**
